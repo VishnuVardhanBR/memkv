@@ -1,45 +1,37 @@
+#include "server.hpp"
 #include "httplib.h"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
-#include <mutex>
-#include <string>
-#include <unordered_map>
+#include <sstream>
 
 std::string PERSISTENT_FILE_PATH = "kv.json";
 
-class KeyValue {
-  private:
-    std::unordered_map<std::string, std::string> key_value;
-    std::mutex mutex;
-
-  public:
-    std::string getValue(std::string &key) {
-        std::lock_guard<std::mutex> lock(mutex);
-        auto it = key_value.find(key);
-        if (it == key_value.end()) {
-            throw std::out_of_range("key not found");
-        }
-        return it->second;
+std::string KeyValue::getValue(std::string &key) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = key_value.find(key);
+    if (it == key_value.end()) {
+        throw std::out_of_range("key not found");
     }
+    return it->second;
+}
 
-    int insert(std::string &key, std::string &value) {
-        std::lock_guard<std::mutex> lock(mutex);
-        key_value[key] = value;
-        return 0;
-    }
+int KeyValue::insert(std::string &key, std::string &value) {
+    std::lock_guard<std::mutex> lock(mutex);
+    key_value[key] = value;
+    return 0;
+}
 
-    int erase(std::string &key) {
-        std::lock_guard<std::mutex> lock(mutex);
-        key_value.erase(key);
-        return 0;
-    }
+int KeyValue::erase(std::string &key) {
+    std::lock_guard<std::mutex> lock(mutex);
+    key_value.erase(key);
+    return 0;
+}
 
-    void clear() {
-        std::lock_guard<std::mutex> lock(mutex);
-        key_value.clear();
-    }
-};
+void KeyValue::clear() {
+    std::lock_guard<std::mutex> lock(mutex);
+    key_value.clear();
+}
 
 std::string parseMapToJSON(std::unordered_map<std::string, std::string> &map) {
     std::string JSON;
