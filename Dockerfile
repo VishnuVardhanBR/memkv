@@ -6,9 +6,9 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY server.cpp httplib.h ./
+COPY server.cpp server.hpp store.cpp persistence.cpp httplib.h ./
 
-RUN g++ -std=c++17 -O2 -pthread server.cpp -o server
+RUN g++ -std=c++17 -O2 -pthread server.cpp store.cpp persistence.cpp -o server
 
 VOLUME ["/app/data"]
 

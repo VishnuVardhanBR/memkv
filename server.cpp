@@ -1,101 +1,24 @@
 #include "server.hpp"
 #include "httplib.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
-#include <fstream>
-#include <sstream>
+#include <chrono>
+#include <csignal>
+#include <stdexcept>
+#include <thread>
 
-std::string PERSISTENT_FILE_PATH = "kv.json";
+KeyValue kv;
+std::atomic<bool> shutdownRequested(false);
 
-std::string KeyValue::getValue(std::string &key) {
-    std::lock_guard<std::mutex> lock(mutex);
-    auto it = key_value.find(key);
-    if (it == key_value.end()) {
-        throw std::out_of_range("key not found");
-    }
-    return it->second;
-}
-
-int KeyValue::insert(std::string &key, std::string &value) {
-    std::lock_guard<std::mutex> lock(mutex);
-    key_value[key] = value;
-    return 0;
-}
-
-int KeyValue::erase(std::string &key) {
-    std::lock_guard<std::mutex> lock(mutex);
-    key_value.erase(key);
-    return 0;
-}
-
-void KeyValue::clear() {
-    std::lock_guard<std::mutex> lock(mutex);
-    key_value.clear();
-}
-
-std::string parseMapToJSON(std::unordered_map<std::string, std::string> &map) {
-    std::string JSON;
-    JSON.append("{");
-    bool first = true;
-    for (std::pair<std::string, std::string> p : map) {
-        if (!first)
-            JSON.append(",");
-        JSON.append("\"" + p.first + "\"");
-        JSON.append(":");
-        JSON.append("\"" + p.second + "\"");
-        first = false;
-    }
-    JSON.append("}");
-    return JSON;
-}
-
-std::unordered_map<std::string, std::string> parseJSONToMap(std::string json) {
-    std::unordered_map<std::string, std::string> map;
-    size_t pos = 1;
-    while (pos < json.length() - 1) {
-        size_t key_start = json.find('"', pos) + 1;
-        size_t key_end = json.find('"', key_start);
-        std::string key = json.substr(key_start, key_end - key_start);
-
-        size_t value_start = json.find('"', key_end + 1) + 1;
-        size_t value_end = json.find('"', value_start);
-        std::string value = json.substr(value_start, value_end - value_start);
-
-        map[key] = value;
-        pos = value_end + 1;
-    }
-    return map;
-}
-
-// Store map to disk in json format
-void saveToDisk(std::unordered_map<std::string, std::string> &map) {
-    std::ofstream outputFile(PERSISTENT_FILE_PATH);
-    if (!outputFile.is_open()) {
-        return;
-    }
-
-    outputFile << parseMapToJSON(map);
-    outputFile.close();
-}
-
-void readFromDisk(std::unordered_map<std::string, std::string> &map) {
-    std::ifstream inputFile(PERSISTENT_FILE_PATH);
-    if (!inputFile.is_open()) {
-        return;
-    }
-
-    std::stringstream buffer;
-    buffer << inputFile.rdbuf();
-    std::string content = buffer.str();
-    map = parseJSONToMap(content);
-    inputFile.close();
-}
+void handleSignal(int) { shutdownRequested.store(true); }
 
 int main() {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(100); };
-    KeyValue kv;
-    std::atomic<bool> ready{false};
+
+    std::signal(SIGTERM, handleSignal);
+    std::signal(SIGINT, handleSignal);
 
     svr.set_pre_routing_handler([](const httplib::Request &req, httplib::Response &res) {
         bool method_allowed = true;
@@ -126,7 +49,7 @@ int main() {
     });
 
     // Add or update a key-value pair in the store.
-    svr.Put("/kv/:key", [&kv](const httplib::Request &req, httplib::Response &res) {
+    svr.Put("/kv/:key", [](const httplib::Request &req, httplib::Response &res) {
         auto key = req.path_params.at("key");
         auto value = req.body;
         if (key.empty()) {
@@ -152,7 +75,7 @@ int main() {
         res.set_content("ok", "text/plain");
     });
 
-    svr.Get("/kv/:key", [&kv](const httplib::Request &req, httplib::Response &res) {
+    svr.Get("/kv/:key", [](const httplib::Request &req, httplib::Response &res) {
         auto key = req.path_params.at("key");
 
         if (key.empty()) {
@@ -171,7 +94,7 @@ int main() {
         }
     });
 
-    svr.Delete("/kv/:key", [&kv](const httplib::Request &req, httplib::Response &res) {
+    svr.Delete("/kv/:key", [](const httplib::Request &req, httplib::Response &res) {
         auto key = req.path_params.at("key");
 
         if (key.empty()) {
@@ -185,24 +108,33 @@ int main() {
         res.set_content("ok", "text/plain");
     });
 
-    svr.Delete("/clear", [&kv](const httplib::Request &req, httplib::Response &res) {
+    svr.Delete("/clear", [](const httplib::Request &, httplib::Response &res) {
         kv.clear();
         res.status = 200;
         res.set_content("ok", "text/plain");
     });
 
-    svr.Get("/health", [&ready](const httplib::Request &, httplib::Response &res) {
-        if (ready.load()) {
-            res.status = 200;
-            res.set_content("ok", "text/plain");
-        } else {
-            res.status = 503;
-            res.set_content("not ready", "text/plain");
-        }
+    svr.Get("/health", [](const httplib::Request &, httplib::Response &res) {
+        res.status = 200;
+        res.set_content("ok", "text/plain");
     });
 
-    ready.store(true);
-    svr.listen("0.0.0.0", 8080);
+    kv.load();
+    // we run in a seperate thread, so when we do .join, it waits gracefully for everything to
+    // complete and then it joins it back.
+    std::thread serverThread([&svr]() { svr.listen("0.0.0.0", 8080); });
+
+    svr.wait_until_ready();
+
+    while (!shutdownRequested) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    svr.stop();
+    serverThread.join();
+
+    kv.save();
+    return 0;
 }
 
 // file handling and writing implemented, now need to implement graceful shutdown

@@ -14,6 +14,8 @@ class KeyValue {
     int insert(std::string &key, std::string &value);
     int erase(std::string &key);
     void clear();
+    void save();
+    void load();
 };
 
 std::string parseMapToJSON(std::unordered_map<std::string, std::string> &map);
