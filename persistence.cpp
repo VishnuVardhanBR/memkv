@@ -5,11 +5,12 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <stdlib.h>
 #include <string>
 #include <unordered_map>
 
-const char *dataDir = std::getenv("DATA_DIR");
+const std::filesystem::path data_directory = "data";
+const std::filesystem::path snapshot_directory = data_directory / "kv";
+const std::filesystem::path wal_file = data_directory / "wal.log";
 
 std::string parseMapToJSON(std::unordered_map<std::string, std::string> &map) {
     std::string JSON;
@@ -48,11 +49,12 @@ std::unordered_map<std::string, std::string> parseJSONToMap(std::string json) {
 // Store map to disk in json format
 bool writeSnapshot(std::unordered_map<std::string, std::string> &map) {
     auto timestamp = std::chrono::system_clock::now();
-    std::string file_path = (dataDir ? std::string(dataDir) + "/kv/" : "") +
-                            std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                               timestamp.time_since_epoch())
-                                               .count()) +
-                            "_kv.json";
+    std::filesystem::create_directories(snapshot_directory);
+    auto file_path = snapshot_directory /
+                     (std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         timestamp.time_since_epoch())
+                                         .count()) +
+                      "_kv.json");
     std::ofstream outputFile(file_path);
     if (!outputFile.is_open()) {
         return false;
@@ -64,12 +66,10 @@ bool writeSnapshot(std::unordered_map<std::string, std::string> &map) {
 }
 
 void recoverFromDisk(std::unordered_map<std::string, std::string> &map) {
-    const auto snapshot_dir =
-        dataDir ? std::filesystem::path(dataDir) / "kv" : std::filesystem::path(".");
-    std::filesystem::create_directories(snapshot_dir);
+    std::filesystem::create_directories(snapshot_directory);
     std::filesystem::path latest_file;
 
-    for (const auto &file : std::filesystem::directory_iterator(snapshot_dir))
+    for (const auto &file : std::filesystem::directory_iterator(snapshot_directory))
         if (file.path() > latest_file)
             latest_file = file.path();
 
@@ -84,8 +84,8 @@ void recoverFromDisk(std::unordered_map<std::string, std::string> &map) {
 
 // timestamp, operation, key, value
 void appendToWAL(std::string operation, std::string key, std::string value) {
-    std::string wal_path = dataDir ? std::string(dataDir) + "/wal.log" : "wal.log";
-    std::ofstream outputFile(wal_path, std::ios::app);
+    std::filesystem::create_directories(data_directory);
+    std::ofstream outputFile(wal_file, std::ios::app);
     if (!outputFile.is_open()) {
         return;
     }
@@ -101,14 +101,12 @@ void appendToWAL(std::string operation, std::string key, std::string value) {
 void checkpoint(std::unordered_map<std::string, std::string> &map) {
     if (!writeSnapshot(map))
         return;
-    std::string wal_path = dataDir ? std::string(dataDir) + "/wal.log" : "wal.log";
-    std::ofstream(wal_path, std::ios::trunc);
+    std::ofstream(wal_file, std::ios::trunc);
 }
 
 // replay all logs from WAL one by one from previous checkpoint
 void replayWAL(std::unordered_map<std::string, std::string> &map) {
-    std::string wal_path = dataDir ? std::string(dataDir) + "/wal.log" : "wal.log";
-    std::ifstream inputFile(wal_path);
+    std::ifstream inputFile(wal_file);
     long long timestamp;
     std::string operation, key, value;
 
