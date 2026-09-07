@@ -1,14 +1,15 @@
 
 #include "server.hpp"
+#include <chrono>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <stdlib.h>
 #include <string>
 #include <unordered_map>
 
 const char *dataDir = std::getenv("DATA_DIR");
-
-std::string DATA_FILE = dataDir ? std::string(dataDir) + "/kv.json" : "kv.json";
 
 std::string parseMapToJSON(std::unordered_map<std::string, std::string> &map) {
     std::string JSON;
@@ -45,25 +46,78 @@ std::unordered_map<std::string, std::string> parseJSONToMap(std::string json) {
 }
 
 // Store map to disk in json format
-void saveToDisk(std::unordered_map<std::string, std::string> &map) {
-    std::ofstream outputFile(DATA_FILE);
+bool saveToDisk(std::unordered_map<std::string, std::string> &map) {
+    auto timestamp = std::chrono::system_clock::now();
+    std::string file_path = (dataDir ? std::string(dataDir) + "/kv/" : "") +
+                            std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               timestamp.time_since_epoch())
+                                               .count()) +
+                            "_kv.json";
+    std::ofstream outputFile(file_path);
     if (!outputFile.is_open()) {
-        return;
+        return false;
     }
 
     outputFile << parseMapToJSON(map);
     outputFile.close();
+    return outputFile.good();
 }
 
 void readFromDisk(std::unordered_map<std::string, std::string> &map) {
-    std::ifstream inputFile(DATA_FILE);
-    if (!inputFile.is_open()) {
+    const auto snapshot_dir =
+        dataDir ? std::filesystem::path(dataDir) / "kv" : std::filesystem::path(".");
+    std::filesystem::create_directories(snapshot_dir);
+    std::filesystem::path latest_file;
+
+    for (const auto &file : std::filesystem::directory_iterator(snapshot_dir))
+        if (file.path() > latest_file)
+            latest_file = file.path();
+
+    std::ifstream inputFile(latest_file);
+    if (inputFile.is_open()) {
+        std::stringstream buffer;
+        buffer << inputFile.rdbuf();
+        map = parseJSONToMap(buffer.str());
+    }
+    replayWAL(map);
+}
+
+// timestamp, operation, key, value
+void appendToWAL(std::string operation, std::string key, std::string value) {
+    std::string wal_path = dataDir ? std::string(dataDir) + "/wal.log" : "wal.log";
+    std::ofstream outputFile(wal_path, std::ios::app);
+    if (!outputFile.is_open()) {
         return;
     }
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+    outputFile << timestamp << ' ' << operation << ' ' << std::quoted(key) << ' '
+               << std::quoted(value) << '\n'
+               << std::flush;
+}
 
-    std::stringstream buffer;
-    buffer << inputFile.rdbuf();
-    std::string content = buffer.str();
-    map = parseJSONToMap(content);
-    inputFile.close();
+// write to storage, clear WAL
+void flushWAL(std::unordered_map<std::string, std::string> &map) {
+    if (!saveToDisk(map))
+        return;
+    std::string wal_path = dataDir ? std::string(dataDir) + "/wal.log" : "wal.log";
+    std::ofstream(wal_path, std::ios::trunc);
+}
+
+// replay all logs from WAL one by one from previous checkpoint
+void replayWAL(std::unordered_map<std::string, std::string> &map) {
+    std::string wal_path = dataDir ? std::string(dataDir) + "/wal.log" : "wal.log";
+    std::ifstream inputFile(wal_path);
+    long long timestamp;
+    std::string operation, key, value;
+
+    while (inputFile >> timestamp >> operation >> std::quoted(key) >> std::quoted(value)) {
+        if (operation == "INSERT")
+            map[key] = value;
+        else if (operation == "ERASE")
+            map.erase(key);
+        else if (operation == "CLEAR")
+            map.clear();
+    }
 }

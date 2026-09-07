@@ -10,21 +10,33 @@ std::string KeyValue::getValue(std::string &key) {
     return it->second;
 }
 
+void KeyValue::incrementOperations() {
+    operations++;
+    // hack : clear WAL and force write persistence
+    if (operations % 10 == 0)
+        flushWAL(key_value);
+}
 int KeyValue::insert(std::string &key, std::string &value) {
     std::lock_guard<std::mutex> lock(mutex);
+    appendToWAL("INSERT", key, value);
     key_value[key] = value;
+    incrementOperations();
     return 0;
 }
 
 int KeyValue::erase(std::string &key) {
     std::lock_guard<std::mutex> lock(mutex);
+    appendToWAL("ERASE", key);
     key_value.erase(key);
+    incrementOperations();
     return 0;
 }
 
 void KeyValue::clear() {
     std::lock_guard<std::mutex> lock(mutex);
+    appendToWAL("CLEAR");
     key_value.clear();
+    incrementOperations();
 }
 
 void KeyValue::save() {

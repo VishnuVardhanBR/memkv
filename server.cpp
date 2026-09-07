@@ -136,5 +136,3 @@ int main() {
     kv.save();
     return 0;
 }
-
-// file handling and writing implemented, now need to implement graceful shutdown
