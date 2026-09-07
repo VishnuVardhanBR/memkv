@@ -12,6 +12,12 @@
 - httplib already defaults both server timeouts to five seconds (5s was mentioned in the challenge)
 
 # Crash Recovery
+- Modified KeyStore's operations to write to log before doing the operation.
+- Wrote a hacky way to checkpoint when operationsSinceCheckpoint reaches 10; an observer pattern could be considered in the future.
+- Changed writeSnapshot to include a timestamp in the file name, recoverFromDisk gets the latest file and calls replayWAL.
+
+
+
 ## TODO
 - Implement WAL
   [X] before each operation, append to WAL on disk and force flush it.

@@ -46,7 +46,7 @@ std::unordered_map<std::string, std::string> parseJSONToMap(std::string json) {
 }
 
 // Store map to disk in json format
-bool saveToDisk(std::unordered_map<std::string, std::string> &map) {
+bool writeSnapshot(std::unordered_map<std::string, std::string> &map) {
     auto timestamp = std::chrono::system_clock::now();
     std::string file_path = (dataDir ? std::string(dataDir) + "/kv/" : "") +
                             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -63,7 +63,7 @@ bool saveToDisk(std::unordered_map<std::string, std::string> &map) {
     return outputFile.good();
 }
 
-void readFromDisk(std::unordered_map<std::string, std::string> &map) {
+void recoverFromDisk(std::unordered_map<std::string, std::string> &map) {
     const auto snapshot_dir =
         dataDir ? std::filesystem::path(dataDir) / "kv" : std::filesystem::path(".");
     std::filesystem::create_directories(snapshot_dir);
@@ -98,8 +98,8 @@ void appendToWAL(std::string operation, std::string key, std::string value) {
 }
 
 // write to storage, clear WAL
-void flushWAL(std::unordered_map<std::string, std::string> &map) {
-    if (!saveToDisk(map))
+void checkpoint(std::unordered_map<std::string, std::string> &map) {
+    if (!writeSnapshot(map))
         return;
     std::string wal_path = dataDir ? std::string(dataDir) + "/wal.log" : "wal.log";
     std::ofstream(wal_path, std::ios::trunc);

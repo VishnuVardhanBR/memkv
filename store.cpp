@@ -11,10 +11,10 @@ std::string KeyValue::getValue(std::string &key) {
 }
 
 void KeyValue::incrementOperations() {
-    operations++;
+    operationsSinceCheckpoint++;
     // hack : clear WAL and force write persistence
-    if (operations % 10 == 0)
-        flushWAL(key_value);
+    if (operationsSinceCheckpoint % 10 == 0)
+        checkpoint(key_value);
 }
 int KeyValue::insert(std::string &key, std::string &value) {
     std::lock_guard<std::mutex> lock(mutex);
@@ -41,10 +41,10 @@ void KeyValue::clear() {
 
 void KeyValue::save() {
     std::lock_guard<std::mutex> lock(mutex);
-    saveToDisk(key_value);
+    checkpoint(key_value);
 }
 
 void KeyValue::load() {
     std::lock_guard<std::mutex> lock(mutex);
-    readFromDisk(key_value);
+    recoverFromDisk(key_value);
 }
