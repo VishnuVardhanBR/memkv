@@ -6,9 +6,13 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY server.cpp server.hpp store.cpp persistence.cpp httplib.h ./
+COPY api/ ./api/
+COPY helper/ ./helper/
+COPY raft/ ./raft/
+COPY store/ ./store/
 
-RUN g++ -std=c++17 -O2 -pthread server.cpp store.cpp persistence.cpp -o server
+RUN g++ -std=c++17 -O2 -pthread api/server.cpp store/store.cpp store/persistence.cpp \
+    helper/jsonhandler.cpp raft/raft.cpp -o server
 
 VOLUME ["/app/data"]
 

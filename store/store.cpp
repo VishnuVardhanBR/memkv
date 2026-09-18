@@ -1,4 +1,5 @@
-#include "server.hpp"
+#include "store.hpp"
+#include "persistence.hpp"
 #include <stdexcept>
 
 std::string KeyValue::getValue(std::string &key) {

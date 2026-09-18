@@ -1,12 +1,17 @@
 #include "server.hpp"
 #include "httplib.h"
+#include "../raft/raft.hpp"
+#include "../store/store.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 KeyValue kv;
 std::atomic<bool> shutdownRequested(false);
@@ -16,6 +21,22 @@ void handleSignal(int) { shutdownRequested.store(true); }
 int main() {
     httplib::Server svr;
     svr.new_task_queue = [] { return new httplib::ThreadPool(100); };
+
+    // read env variables and assign id and peers to raft
+    const auto addrEnv = std::getenv("ADDR");
+    std::string id = addrEnv ? addrEnv : "";
+
+    std::vector<std::string> peers;
+    if (const auto peersEnv = std::getenv("PEERS")) {
+        std::stringstream peerStream(peersEnv);
+        std::string peer;
+        while (std::getline(peerStream, peer, ',')) {
+            if (!peer.empty())
+                peers.push_back(peer);
+        }
+    }
+
+    RaftNode raft(id, peers);
 
     std::signal(SIGTERM, handleSignal);
     std::signal(SIGINT, handleSignal);
