@@ -1,7 +1,8 @@
 #include "server.hpp"
-#include "httplib.h"
+#include "../helper/jsonhandler.hpp"
 #include "../raft/raft.hpp"
 #include "../store/store.hpp"
+#include "httplib.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -138,6 +139,38 @@ int main() {
     svr.Get("/health", [](const httplib::Request &, httplib::Response &res) {
         res.status = 200;
         res.set_content("ok", "text/plain");
+    });
+
+    svr.Post("/raft/request-vote", [&raft](const httplib::Request &req, httplib::Response &res) {
+        auto body = parseJSONToMap(req.body);
+        auto candidate_term = std::stoull(body.at("term"));
+        auto candidate_id = body.at("candidate_id");
+        auto last_log_index = std::stoull(body.at("last-log-index"));
+        auto last_log_term = std::stoull(body.at("last-log-term"));
+
+        auto [term, voteGranted] =
+            raft.requestVote(candidate_term, candidate_id, last_log_index, last_log_term);
+        res.status = 200;
+        res.set_content("{\"term\":" + std::to_string(term) +
+                            ",\"voteGranted\":" + (voteGranted ? "true" : "false") + "}",
+                        "application/json");
+    });
+
+    svr.Post("/raft/append-entries", [&raft](const httplib::Request &req, httplib::Response &res) {
+        auto body = parseJSONToMap(req.body);
+        auto leader_term = std::stoull(body.at("term"));
+        auto leader_id = body.at("leader_id");
+        auto prev_log_index = std::stoull(body.at("prev-log-index"));
+        auto prev_log_term = std::stoull(body.at("prev-log-term"));
+        auto entries = body.at("entries");
+        auto leader_commit = std::stoull(body.at("leader-commit"));
+
+        auto [term, success] = raft.appendEntries(leader_term, leader_id, prev_log_index,
+                                                  prev_log_term, entries, leader_commit);
+        res.status = 200;
+        res.set_content("{\"term\":" + std::to_string(term) +
+                            ",\"success\":" + (success ? "true" : "false") + "}",
+                        "application/json");
     });
 
     kv.load();
