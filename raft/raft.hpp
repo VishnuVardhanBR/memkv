@@ -12,12 +12,18 @@ enum State {
     FOLLOWER
 };
 
+struct LogEntry {
+  std::string command; 
+  std::size_t term;
+};
+
 class RaftNode {
   private:
     std::size_t currentTerm = 0;
     std::string votedFor;
     std::string leaderID;
     std::string id;
+    std::vector<LogEntry> log;
     std::vector<std::string> peers;
     State state = FOLLOWER;
     std::size_t commitIndex = 0;
