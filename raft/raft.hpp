@@ -31,6 +31,11 @@ class RaftNode {
     std::vector<std::size_t> nextIndex; 
     std::vector<std::size_t> matchIndex;
     std::chrono::milliseconds timeout;
+    std::chrono::milliseconds heartbeat_period = std::chrono::milliseconds(100);
+    std::chrono::steady_clock::time_point last_append_entries;
+    const std::filesystem::path data_directory = "data";
+    const std::filesystem::path raft_state_file = data_directory / "raft_state";
+
   public:
     RaftNode(std::string id, std::vector<std::string> peers);
     void start();

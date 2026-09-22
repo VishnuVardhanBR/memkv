@@ -144,9 +144,9 @@ int main() {
     svr.Post("/raft/request-vote", [&raft](const httplib::Request &req, httplib::Response &res) {
         auto body = parseJSONToMap(req.body);
         auto candidate_term = std::stoull(body.at("term"));
-        auto candidate_id = body.at("candidate_id");
-        auto last_log_index = std::stoull(body.at("last-log-index"));
-        auto last_log_term = std::stoull(body.at("last-log-term"));
+        auto candidate_id = body.at("candidateId");
+        auto last_log_index = std::stoull(body.at("lastLogIndex"));
+        auto last_log_term = std::stoull(body.at("lastLogTerm"));
 
         auto [term, voteGranted] =
             raft.requestVote(candidate_term, candidate_id, last_log_index, last_log_term);
@@ -159,11 +159,11 @@ int main() {
     svr.Post("/raft/append-entries", [&raft](const httplib::Request &req, httplib::Response &res) {
         auto body = parseJSONToMap(req.body);
         auto leader_term = std::stoull(body.at("term"));
-        auto leader_id = body.at("leader_id");
-        auto prev_log_index = std::stoull(body.at("prev-log-index"));
-        auto prev_log_term = std::stoull(body.at("prev-log-term"));
+        auto leader_id = body.at("leaderId");
+        auto prev_log_index = std::stoull(body.at("prevLogIndex"));
+        auto prev_log_term = std::stoull(body.at("prevLogTerm"));
         auto entries = body.at("entries");
-        auto leader_commit = std::stoull(body.at("leader-commit"));
+        auto leader_commit = std::stoull(body.at("leaderCommit"));
 
         auto [term, success] = raft.appendEntries(leader_term, leader_id, prev_log_index,
                                                   prev_log_term, entries, leader_commit);
