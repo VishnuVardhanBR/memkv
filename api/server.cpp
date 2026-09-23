@@ -179,13 +179,16 @@ int main() {
     std::thread serverThread([&svr]() { svr.listen("0.0.0.0", 8080); });
 
     svr.wait_until_ready();
+    std::thread raftThread([&raft]() { raft.start(); });
 
     while (!shutdownRequested) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
+    raft.stop();
     svr.stop();
     serverThread.join();
+    raftThread.join();
 
     kv.save();
     return 0;

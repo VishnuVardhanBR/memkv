@@ -1,7 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,6 +22,8 @@ struct LogEntry {
 
 class RaftNode {
   private:
+    std::mutex state_mutex;
+    std::atomic<bool> stopped{false};
     std::size_t currentTerm = 0;
     std::string votedFor;
     std::string leaderID;

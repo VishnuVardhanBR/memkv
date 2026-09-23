@@ -11,7 +11,7 @@ COPY helper/ ./helper/
 COPY raft/ ./raft/
 COPY store/ ./store/
 
-RUN g++ -std=c++17 -O2 -pthread api/server.cpp store/store.cpp store/persistence.cpp \
+RUN g++ -std=c++17 -O2 -pthread api/server.cpp store/store.cpp store/kv_persistence.cpp \
     helper/jsonhandler.cpp raft/raft.cpp -o server
 
 VOLUME ["/app/data"]
