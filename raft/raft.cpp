@@ -1,14 +1,14 @@
 #include "raft.hpp"
-#include "../helper/jsonhandler.hpp"
+#include "../third_party/nlohmann/json.hpp"
 
 #include <filesystem>
 #include <fstream>
 #include "../api/httplib.h"
 #include <random>
-#include <sstream>
 #include <thread>
 #include <utility>
 
+using json = nlohmann::json;
 
 // chrono last append entry when
 
@@ -19,17 +19,16 @@ RaftNode::RaftNode(std::string nodeID, std::vector<std::string> nodePeers)
     if (!inputFile.is_open())
         return;
 
-    std::stringstream buffer;
-    buffer << inputFile.rdbuf();
-    auto map = parseJSONToMap(buffer.str());
+    auto map = json::parse(inputFile);
 
     auto term = map.find("currentTerm");
-    if (term != map.end() && !term->second.empty())
-        currentTerm = std::stoull(term->second);
+    if (term != map.end() && *term != "")
+        currentTerm = term->is_string() ? std::stoull(term->get<std::string>())
+                                       : term->get<std::size_t>();
 
     auto vote = map.find("votedFor");
     if (vote != map.end())
-        votedFor = vote->second;
+        votedFor = vote->get<std::string>();
 
 }
 
@@ -57,24 +56,24 @@ void RaftNode::start() {
             timeout = std::chrono::milliseconds{dist(eng)};
             election_deadline = std::chrono::steady_clock::now() + timeout;
 
-            std::unordered_map<std::string, std::string> body; 
+            json body;
             body["term"] = currentTerm;
             body["candidateId"] = id;
-            body["lastLogIndex"] = std::to_string(log.size());
-            body["lastLogTerm"] = std::to_string(log.empty() ? 0 : log.back().term);
+            body["lastLogIndex"] = log.size();
+            body["lastLogTerm"] = log.empty() ? 0 : log.back().term;
 
             size_t votes = 1;
             const auto electionTerm = currentTerm;
             for(auto peer : peers) {
                 httplib::Client cli("http://" + peer + ":8080");            
                 lock.unlock();
-                auto res = cli.Post("/raft/request-vote", parseMapToJSON(body), "application/json");
+                auto res = cli.Post("/raft/request-vote", body.dump(), "application/json");
                 lock.lock();
                 if (stopped || state != CANDIDATE || currentTerm != electionTerm)
                     break;
                 if(res){
-                    const auto response = parseJSONToMap(res->body);
-                    auto responseTerm = std::stoull(response.at("term"));
+                    const auto response = json::parse(res->body);
+                    auto responseTerm = response.at("term").get<std::size_t>();
                     if (responseTerm > currentTerm) {
                         currentTerm = responseTerm;
                         votedFor.clear();
@@ -83,10 +82,11 @@ void RaftNode::start() {
                         // TODO: Persist updated state
                         break;
                     }
-                    votes += responseTerm == electionTerm && response.at("voteGranted") == "true";
+                    votes += responseTerm == electionTerm && response.at("voteGranted").get<bool>();
                 
                     if (votes >= (peers.size()+1)/2 + 1){
                         state = LEADER;
+                        leaderID = id;
                         break;
                     }
                 }
@@ -96,18 +96,18 @@ void RaftNode::start() {
             // send out heartbeats, handle replication?
             while (!stopped && state == LEADER) {
                 const auto heartbeatTerm = currentTerm;
-                std::unordered_map<std::string, std::string> body;
+                json body;
                 body["term"] = currentTerm;
                 body["leaderId"] = leaderID;
-                body["prevLogIndex"] = std::to_string(log.size());
-                body["prevLogTerm"] = std::to_string(log.empty() ? 0 : log.back().term);
-                body["entries"] = "";
+                body["prevLogIndex"] = log.size();
+                body["prevLogTerm"] = log.empty() ? 0 : log.back().term;
+                body["entries"] = json::array();
                 body["leaderCommit"] = commitIndex;
                 
                 for(auto peer : peers) {
                     httplib::Client cli("http://" + peer + ":8080");            
                     lock.unlock();
-                    auto res = cli.Post("/raft/append-entries", parseMapToJSON(body), "application/json");
+                    auto res = cli.Post("/raft/append-entries", body.dump(), "application/json");
                     lock.lock();
                     if (stopped || state != LEADER || currentTerm != heartbeatTerm)
                         break;
@@ -134,6 +134,17 @@ void RaftNode::start() {
 }
 
 void RaftNode::stop() { stopped = true; }
+
+std::string RaftNode::clusterInfo() {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    const char *role = state == LEADER ? "leader"
+                     : state == CANDIDATE ? "candidate" : "follower";
+    return json{{"id", id},
+                {"role", role},
+                {"term", currentTerm},
+                {"leader", state == LEADER ? id : leaderID},
+                {"peers", peers}}.dump();
+}
 
 std::pair<size_t, bool> RaftNode::appendEntries(size_t term, const std::string &leader_id,
                                       size_t prev_log_index, size_t prev_log_term,

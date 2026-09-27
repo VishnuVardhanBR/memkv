@@ -1,7 +1,7 @@
 #include "server.hpp"
-#include "../helper/jsonhandler.hpp"
 #include "../raft/raft.hpp"
 #include "../store/store.hpp"
+#include "../third_party/nlohmann/json.hpp"
 #include "httplib.h"
 #include <algorithm>
 #include <atomic>
@@ -13,6 +13,8 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+
+using json = nlohmann::json;
 
 KeyValue kv;
 std::atomic<bool> shutdownRequested(false);
@@ -142,35 +144,46 @@ int main() {
     });
 
     svr.Post("/raft/request-vote", [&raft](const httplib::Request &req, httplib::Response &res) {
-        auto body = parseJSONToMap(req.body);
-        auto candidate_term = std::stoull(body.at("term"));
-        auto candidate_id = body.at("candidateId");
-        auto last_log_index = std::stoull(body.at("lastLogIndex"));
-        auto last_log_term = std::stoull(body.at("lastLogTerm"));
+        try {
+            auto body = json::parse(req.body);
+            auto candidate_term = body.at("term").get<std::size_t>();
+            auto candidate_id = body.at("candidateId").get<std::string>();
+            auto last_log_index = body.at("lastLogIndex").get<std::size_t>();
+            auto last_log_term = body.at("lastLogTerm").get<std::size_t>();
 
-        auto [term, voteGranted] =
-            raft.requestVote(candidate_term, candidate_id, last_log_index, last_log_term);
-        res.status = 200;
-        res.set_content("{\"term\":" + std::to_string(term) +
-                            ",\"voteGranted\":" + (voteGranted ? "true" : "false") + "}",
-                        "application/json");
+            auto [term, voteGranted] =
+                raft.requestVote(candidate_term, candidate_id, last_log_index, last_log_term);
+            res.status = 200;
+            res.set_content(json{{"term", term}, {"voteGranted", voteGranted}}.dump(),
+                            "application/json");
+        } catch (const json::exception &) {
+            res.status = 400;
+            res.set_content("invalid request-vote JSON", "text/plain");
+        }
     });
 
     svr.Post("/raft/append-entries", [&raft](const httplib::Request &req, httplib::Response &res) {
-        auto body = parseJSONToMap(req.body);
-        auto leader_term = std::stoull(body.at("term"));
-        auto leader_id = body.at("leaderId");
-        auto prev_log_index = std::stoull(body.at("prevLogIndex"));
-        auto prev_log_term = std::stoull(body.at("prevLogTerm"));
-        auto entries = body.at("entries");
-        auto leader_commit = std::stoull(body.at("leaderCommit"));
+        try {
+            auto body = json::parse(req.body);
+            auto leader_term = body.at("term").get<std::size_t>();
+            auto leader_id = body.at("leaderId").get<std::string>();
+            auto prev_log_index = body.at("prevLogIndex").get<std::size_t>();
+            auto prev_log_term = body.at("prevLogTerm").get<std::size_t>();
+            auto entries = body.at("entries").dump();
+            auto leader_commit = body.at("leaderCommit").get<std::size_t>();
 
-        auto [term, success] = raft.appendEntries(leader_term, leader_id, prev_log_index,
-                                                  prev_log_term, entries, leader_commit);
-        res.status = 200;
-        res.set_content("{\"term\":" + std::to_string(term) +
-                            ",\"success\":" + (success ? "true" : "false") + "}",
-                        "application/json");
+            auto [term, success] = raft.appendEntries(leader_term, leader_id, prev_log_index,
+                                                      prev_log_term, entries, leader_commit);
+            res.status = 200;
+            res.set_content(json{{"term", term}, {"success", success}}.dump(), "application/json");
+        } catch (const json::exception &) {
+            res.status = 400;
+            res.set_content("invalid append-entries JSON", "text/plain");
+        }
+    });
+
+    svr.Get("/cluster/info", [&raft](const httplib::Request &, httplib::Response &res) {
+        res.set_content(raft.clusterInfo(), "application/json");
     });
 
     kv.load();

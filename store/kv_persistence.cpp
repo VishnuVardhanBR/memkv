@@ -1,10 +1,9 @@
 #include "kv_persistence.hpp"
-#include "../helper/jsonhandler.hpp"
+#include "../third_party/nlohmann/json.hpp"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 
@@ -26,7 +25,7 @@ bool writeSnapshot(std::unordered_map<std::string, std::string> &map) {
         return false;
     }
 
-    outputFile << parseMapToJSON(map);
+    outputFile << nlohmann::json(map).dump();
     outputFile.close();
     return outputFile.good();
 }
@@ -41,9 +40,7 @@ void recoverFromDisk(std::unordered_map<std::string, std::string> &map) {
 
     std::ifstream inputFile(latest_file);
     if (inputFile.is_open()) {
-        std::stringstream buffer;
-        buffer << inputFile.rdbuf();
-        map = parseJSONToMap(buffer.str());
+        map = nlohmann::json::parse(inputFile).get<std::unordered_map<std::string, std::string>>();
     }
     replayWAL(map);
 }

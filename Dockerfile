@@ -10,9 +10,10 @@ COPY api/ ./api/
 COPY helper/ ./helper/
 COPY raft/ ./raft/
 COPY store/ ./store/
+COPY third_party/ ./third_party/
 
 RUN g++ -std=c++17 -O2 -pthread api/server.cpp store/store.cpp store/kv_persistence.cpp \
-    helper/jsonhandler.cpp raft/raft.cpp -o server
+    raft/raft.cpp -o server
 
 VOLUME ["/app/data"]
 
