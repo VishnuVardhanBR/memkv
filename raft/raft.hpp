@@ -48,6 +48,7 @@ class RaftNode {
     void start();
     void stop();
     std::string clusterInfo();
+    std::pair<State, std::string> leaderInfo();
     std::pair<size_t, bool> appendEntries(size_t term, const std::string &leader_id,
                                         size_t prev_log_index, size_t prev_log_term,
                                         const std::string &entries, size_t leader_commit);

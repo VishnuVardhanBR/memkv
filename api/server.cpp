@@ -44,7 +44,7 @@ int main() {
     std::signal(SIGTERM, handleSignal);
     std::signal(SIGINT, handleSignal);
 
-    svr.set_pre_routing_handler([](const httplib::Request &req, httplib::Response &res) {
+    svr.set_pre_routing_handler([&raft](const httplib::Request &req, httplib::Response &res) {
         bool method_allowed = true;
 
         if (req.path == "/") {
@@ -63,6 +63,19 @@ int main() {
             res.status = 405;
             res.set_content("method not allowed", "text/plain");
             return httplib::Server::HandlerResponse::Handled;
+        }
+
+        if (req.path == "/clear" || req.path.rfind("/kv/", 0) == 0) {
+            auto [state, leader] = raft.leaderInfo();
+            if (state != LEADER) {
+                if (state == CANDIDATE || leader.empty()) {
+                    res.status = 503;
+                    res.set_content("leader unavailable", "text/plain");
+                } else {
+                    res.set_redirect("http://" + leader + req.target, 307);
+                }
+                return httplib::Server::HandlerResponse::Handled;
+            }
         }
 
         return httplib::Server::HandlerResponse::Unhandled;

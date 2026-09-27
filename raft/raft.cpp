@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include "../api/httplib.h"
 #include <random>
 #include <thread>
@@ -10,7 +11,24 @@
 
 using json = nlohmann::json;
 
-// chrono last append entry when
+static std::vector<httplib::Result> sendRPCs(const std::vector<std::string> &peers,
+                                          const std::string &path, const json &body) {
+    std::vector<std::future<httplib::Result>> requests;
+    const auto payload = body.dump();
+    for (const auto &peer : peers) {
+        requests.push_back(std::async(std::launch::async, [peer, path, payload] {
+            httplib::Client cli("http://" + peer);
+            cli.set_connection_timeout(0, 100000);
+            cli.set_read_timeout(0, 100000);
+            cli.set_write_timeout(0, 100000);
+            return cli.Post(path, payload, "application/json");
+        }));
+    }
+    std::vector<httplib::Result> results;
+    for (auto &request : requests)
+        results.push_back(request.get());
+    return results;
+}
 
 
 RaftNode::RaftNode(std::string nodeID, std::vector<std::string> nodePeers)
@@ -64,11 +82,10 @@ void RaftNode::start() {
 
             size_t votes = 1;
             const auto electionTerm = currentTerm;
-            for(auto peer : peers) {
-                httplib::Client cli("http://" + peer + ":8080");            
-                lock.unlock();
-                auto res = cli.Post("/raft/request-vote", body.dump(), "application/json");
-                lock.lock();
+            lock.unlock();
+            auto results = sendRPCs(peers, "/raft/request-vote", body);
+            lock.lock();
+            for (auto &res : results) {
                 if (stopped || state != CANDIDATE || currentTerm != electionTerm)
                     break;
                 if(res){
@@ -92,10 +109,13 @@ void RaftNode::start() {
                 }
             }
 
-        } else if (RaftNode::state == LEADER) {
+        }
+        if (RaftNode::state == LEADER) {
             // send out heartbeats, handle replication?
+            auto last_quorum = std::chrono::steady_clock::now();
             while (!stopped && state == LEADER) {
                 const auto heartbeatTerm = currentTerm;
+                size_t responses = 1;
                 json body;
                 body["term"] = currentTerm;
                 body["leaderId"] = leaderID;
@@ -104,16 +124,35 @@ void RaftNode::start() {
                 body["entries"] = json::array();
                 body["leaderCommit"] = commitIndex;
                 
-                for(auto peer : peers) {
-                    httplib::Client cli("http://" + peer + ":8080");            
-                    lock.unlock();
-                    auto res = cli.Post("/raft/append-entries", body.dump(), "application/json");
-                    lock.lock();
+                lock.unlock();
+                auto results = sendRPCs(peers, "/raft/append-entries", body);
+                lock.lock();
+                for (auto &res : results) {
                     if (stopped || state != LEADER || currentTerm != heartbeatTerm)
                         break;
-                    if(res){
-                        // actions to be done later when entries are implemented 
+                    if (res && res->status == 200) {
+                        const auto response = json::parse(res->body);
+                        auto responseTerm = response.at("term").get<std::size_t>();
+                        if (responseTerm > currentTerm) {
+                            currentTerm = responseTerm;
+                            votedFor.clear();
+                            state = FOLLOWER;
+                            leaderID.clear();
+                            break;
+                        }
+                        responses += responseTerm == heartbeatTerm;
                     }
+                }
+                if (stopped || state != LEADER || currentTerm != heartbeatTerm)
+                    break;
+                auto now = std::chrono::steady_clock::now();
+                if (responses >= (peers.size() + 1) / 2 + 1) {
+                    last_quorum = now;
+                } else if (now - last_quorum >= std::chrono::milliseconds(500)) {
+                    state = FOLLOWER;
+                    leaderID.clear();
+                    last_append_entries = now;
+                    break;
                 }
                 auto delay = heartbeat_period;
                 lock.unlock();
@@ -125,6 +164,7 @@ void RaftNode::start() {
             auto now = std::chrono::steady_clock::now();
             if (now - last_append_entries >= timeout) {
                 state = CANDIDATE;
+                leaderID = "";
             }
         }
         lock.unlock();
@@ -135,14 +175,21 @@ void RaftNode::start() {
 
 void RaftNode::stop() { stopped = true; }
 
+std::pair<State, std::string> RaftNode::leaderInfo() {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    return {state, leaderID};
+}
+
 std::string RaftNode::clusterInfo() {
     std::lock_guard<std::mutex> lock(state_mutex);
     const char *role = state == LEADER ? "leader"
                      : state == CANDIDATE ? "candidate" : "follower";
+    json leader = state == LEADER ? id : leaderID;
+    if (leader == "") leader = nullptr;
     return json{{"id", id},
                 {"role", role},
                 {"term", currentTerm},
-                {"leader", state == LEADER ? id : leaderID},
+                {"leader", leader},
                 {"peers", peers}}.dump();
 }
 
