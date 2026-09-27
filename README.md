@@ -11,7 +11,7 @@ The original `helper/jsonhandler.*` files are retained for reference.
 - [x] HTTP API
 - [x] Persistence
 - [x] Crash Recovery
-- [ ] Leader Election
+- [x] Leader Election
 - [ ] Log Replication
 - [ ] Log Compaction
 - [ ] Membership Changes
